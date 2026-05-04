@@ -18,11 +18,11 @@ prepare_msigdb(
 \item{gene_id_type}{(Default: "ensemble_gene") The gene ID type to extract.
 The IDs should match the gene IDs from your DE analysis.}
 
-\item{species}{Species name for output genes, such as \code{"Homo sapiens"} or \code{"Mus musculus"}. Use \code{msigdbr_species()} for available options.}
+\item{species}{Species name for output genes, such as \code{"Homo sapiens"} or \code{"Mus musculus"}. Both scientific and common names are acceptable. Use \code{msigdbr_species()} to see the available options.}
 
 \item{db_species}{Species abbreviation for the human or mouse databases (\code{"HS"} or \code{"MM"}).}
 
-\item{collection}{Collection abbreviation, such as \code{"H"} or \code{"C1"}. Use \code{msigdbr_collections()} for the available options.}
+\item{collection}{Collection abbreviation, such as \code{"H"} or \code{"C1"}. Use \code{msigdbr_collections()} to see the available options.}
 
 \item{subcollection}{Sub-collection abbreviation, such as \code{"CGP"} or \code{"BP"}. Use \code{msigdbr_collections()} for the available options.}
 
