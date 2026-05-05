@@ -95,10 +95,10 @@ if (!require("BiocManager", quietly = TRUE))
 BiocManager::install("pairedGSEA")
 ```
 
-Install development version from [GitHub](https://github.com/shdam/pairedGSEA)
+Install development version from [GitHub](https://github.com/IsoformAnalysisGroup/pairedGSEA)
 ``` {r install_github, eval=FALSE}
 # Install pairedGSEA from github
-devtools::install_github("shdam/pairedGSEA", build_vignettes = TRUE)
+devtools::install_github("IsoformAnalysisGroup/pairedGSEA", build_vignettes = TRUE)
 ```
 
 # Interoperability with IsoformSwitchAnalyzeR

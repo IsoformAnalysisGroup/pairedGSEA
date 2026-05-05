@@ -67,7 +67,7 @@ biocViews:
     RNASeq,
     Software,
     Transcription,
-URL: https://github.com/shdam/pairedGSEA
-BugReports: https://github.com/shdam/pairedGSEA/issues
+URL: https://github.com/IsoformAnalysisGroup/pairedGSEA
+BugReports: https://github.com/IsoformAnalysisGroup/pairedGSEA/issues
 Depends:
     R (>= 4.4.0)
