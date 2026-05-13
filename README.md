@@ -48,7 +48,7 @@ Install development version from GitHub
 
 ``` r
 # Install pairedGSEA from github
-devtools::install_github("shdam/pairedGSEA", build_vignettes = TRUE)
+devtools::install_github("IsoformAnalysisGroup/pairedGSEA", build_vignettes = TRUE)
 ```
 
 ## Documentation
@@ -147,7 +147,7 @@ plot_ora(
     ggplot2::theme_classic()
 ```
 
-<img src="man/figures/README-plot-1.png" width="100%" />
+<img src="man/figures/README-plot-1.png" alt="" width="100%" />
 
 ## Report issues
 
