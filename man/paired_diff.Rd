@@ -23,6 +23,7 @@ paired_diff(
     parallel = FALSE,
     BPPARAM = BiocParallel::bpparam(),
     expression_only = FALSE,
+    compute_splicing_dif = TRUE,
     custom_design = FALSE,
     ...
     )
@@ -98,6 +99,13 @@ A logical that indicates whether to only
 run \code{\link[DESeq2:DESeq]{DESeq2}} analysis. Not generally recommended.
 The setting was implemented to make the SVA impact analysis easier}
 
+\item{compute_splicing_dif}{(Default: \code{TRUE})
+A logical that indicates whether to calculate gene-level splicing effect
+sizes from isoform fractions using
+\code{\link[IsoformSwitchAnalyzeR:isoformToIsoformFraction]{IsoformSwitchAnalyzeR}}.
+The returned column \code{max_abs_dif_splicing} is the largest absolute
+isoform fraction difference per gene.}
+
 \item{custom_design}{(Default: \code{FALSE}) A logical or formula.
 Can be used to apply a custom design formula for the analysis.
 Generally not recommended, 
@@ -144,7 +152,7 @@ diff_results <- paired_diff(
 
 }
 \seealso{
-Other paired: 
-\code{\link{paired_ora}()}
+Other paired:
+\code{\link[=paired_ora]{paired_ora()}}
 }
 \concept{paired}

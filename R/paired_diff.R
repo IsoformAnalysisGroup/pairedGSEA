@@ -56,6 +56,12 @@
 #' A logical that indicates whether to only
 #' run \code{\link[DESeq2:DESeq]{DESeq2}} analysis. Not generally recommended.
 #' The setting was implemented to make the SVA impact analysis easier
+#' @param compute_splicing_dif (Default: \code{TRUE})
+#' A logical that indicates whether to calculate gene-level splicing effect
+#' sizes from isoform fractions using
+#' \code{\link[IsoformSwitchAnalyzeR:isoformToIsoformFraction]{IsoformSwitchAnalyzeR}}.
+#' The returned column \code{max_abs_dif_splicing} is the largest absolute
+#' isoform fraction difference per gene.
 #' @param custom_design (Default: \code{FALSE}) A logical or formula.
 #' Can be used to apply a custom design formula for the analysis.
 #' Generally not recommended, 
@@ -102,6 +108,7 @@
 #'     parallel = FALSE,
 #'     BPPARAM = BiocParallel::bpparam(),
 #'     expression_only = FALSE,
+#'     compute_splicing_dif = TRUE,
 #'     custom_design = FALSE,
 #'     ...
 #'     )
@@ -140,12 +147,15 @@ paired_diff <- function(
         parallel = FALSE,
         BPPARAM = BiocParallel::bpparam(),
         expression_only = FALSE,
+        compute_splicing_dif = TRUE,
         custom_design = FALSE,
         ...){
 
     ## Initial error checks
     stopifnot(is(
-        c(quiet, use_limma, expression_only, run_sva, store_results, parallel),
+        c(
+            quiet, use_limma, expression_only, run_sva, store_results,
+            parallel, compute_splicing_dif),
         "logical"))
     stopifnot(is(custom_design, "logical") | is(custom_design, "formula"))
     stopifnot(
@@ -354,6 +364,19 @@ paired_diff <- function(
         all = TRUE
     )
 
+    if(compute_splicing_dif) {
+        if(!quiet) message("Calculating splicing dIF")
+        splicing_dif <- compute_splicing_dif_from_counts(
+            dds = dds,
+            group_col = group_col,
+            baseline = baseline,
+            case = case)
+        aggregated_pvals <- merge(
+            aggregated_pvals,
+            splicing_dif,
+            by = "gene",
+            all.x = TRUE)
+    }
 
     if(store_results) store_result(
         aggregated_pvals, paste0(experiment_title, "_aggregated_pvals.RDS"),
@@ -363,6 +386,93 @@ paired_diff <- function(
 
 
     return(aggregated_pvals)
+}
+
+#' Calculate gene-level splicing effect size from isoform fractions
+#'
+#' @inheritParams paired_diff
+#' @param dds A DESeqDataSet after pairedGSEA metadata preparation.
+#' @noRd
+compute_splicing_dif_from_counts <- function(
+        dds,
+        group_col,
+        baseline,
+        case) {
+
+    stopifnot(
+        "Please ensure the rownames have the format 'gene:transcript'" =
+            grepl(":", rownames(dds)[1]))
+
+    gene_tx <- do.call("rbind", strsplit(
+        rownames(dds), ":", fixed = TRUE))
+    isoform_id <- rownames(dds)
+
+    counts <- as.matrix(DESeq2::counts(dds))
+    isoform_expression <- data.frame(
+        isoform_id = isoform_id,
+        counts,
+        check.names = FALSE,
+        stringsAsFactors = FALSE)
+    isoform_gene_annotation <- data.frame(
+        isoform_id = isoform_id,
+        gene_id = gene_tx[, 1],
+        stringsAsFactors = FALSE)
+
+    isoform_fraction <- IsoformSwitchAnalyzeR::isoformToIsoformFraction(
+        isoformRepExpression = isoform_expression,
+        isoformGeneAnnotation = isoform_gene_annotation,
+        quiet = TRUE)
+    isoform_fraction <- as.data.frame(
+        isoform_fraction, stringsAsFactors = FALSE)
+
+    if(!("isoform_id" %in% colnames(isoform_fraction))) {
+        stop(
+            "IsoformSwitchAnalyzeR did not return an isoform_id column.",
+            call. = FALSE)
+    }
+    isoform_fraction <- isoform_fraction[
+        match(isoform_id, isoform_fraction$isoform_id), , drop = FALSE]
+    if(any(is.na(isoform_fraction$isoform_id))) {
+        stop(
+            "Could not align isoform fractions to the input count matrix.",
+            call. = FALSE)
+    }
+
+    metadata <- as.data.frame(SummarizedExperiment::colData(dds))
+    condition <- as.character(metadata[[group_col]])
+    baseline_cols <- colnames(dds)[condition == as.character(baseline)]
+    case_cols <- colnames(dds)[condition == as.character(case)]
+
+    if(length(baseline_cols) == 0 || length(case_cols) == 0) {
+        stop(
+            "Could not find baseline and case samples for dIF calculation.",
+            call. = FALSE)
+    }
+
+    if_values <- as.matrix(
+        isoform_fraction[, colnames(dds), drop = FALSE])
+    storage.mode(if_values) <- "numeric"
+
+    baseline_if <- rowMeans(
+        if_values[, baseline_cols, drop = FALSE], na.rm = TRUE)
+    case_if <- rowMeans(
+        if_values[, case_cols, drop = FALSE], na.rm = TRUE)
+    baseline_if[is.nan(baseline_if)] <- NA_real_
+    case_if[is.nan(case_if)] <- NA_real_
+
+    per_isoform <- data.frame(
+        gene = gene_tx[, 1],
+        dif = case_if - baseline_if,
+        stringsAsFactors = FALSE)
+    per_gene <- split(per_isoform$dif, per_isoform$gene)
+    max_abs_dif <- vapply(per_gene, function(x) {
+        if(all(is.na(x))) return(NA_real_)
+        max(abs(x), na.rm = TRUE)
+    }, numeric(1))
+
+    S4Vectors::DataFrame(
+        gene = names(max_abs_dif),
+        max_abs_dif_splicing = unname(max_abs_dif))
 }
 
 

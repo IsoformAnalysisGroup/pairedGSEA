@@ -19,6 +19,7 @@ test_that("paired_diff works", {
         diff_results , "DFrame")
     expect_true(
         all(c("padj_splicing", "padj_expression") %in% colnames(diff_results)))
+    expect_true("max_abs_dif_splicing" %in% colnames(diff_results))
     expect_gt(
         nrow(diff_results), 0)
     expect_true(file.exists("results/Example_dds.RDS"))
@@ -49,12 +50,14 @@ test_that("paired_diff works with matrix", {
             case = "2",
             experiment_title = "Example",
             store_results = FALSE,
+            compute_splicing_dif = FALSE,
             quiet = TRUE
         ))
     expect_s4_class(
         diff_results , "DFrame")
     expect_true(
         all(c("padj_splicing", "padj_expression") %in% colnames(diff_results)))
+    expect_false("max_abs_dif_splicing" %in% colnames(diff_results))
     expect_gt(
         nrow(diff_results), 0)
 })

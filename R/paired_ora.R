@@ -27,6 +27,18 @@
 #' A logical that indicates whether
 #' to only run \code{\link[DESeq2:DESeq]{DESeq2}} analysis.
 #' Not generally recommended.
+#' @param effect_size_filter (Default: \code{TRUE})
+#' A logical that indicates whether significant genes must also pass
+#' effect-size cutoffs before ORA. Expression uses
+#' \code{abs(lfc_expression) >= expression_lfc_cutoff}; splicing uses
+#' \code{max_abs_dif_splicing >= splicing_dif_cutoff}.
+#' Set to \code{FALSE} to use the previous adjusted p-value-only behavior.
+#' @param expression_lfc_cutoff (Default: \code{log2(1.5)})
+#' Absolute log2 fold-change cutoff used for expression genes when
+#' \code{effect_size_filter = TRUE}.
+#' @param splicing_dif_cutoff (Default: \code{0.1})
+#' Absolute isoform fraction difference cutoff used for splicing genes when
+#' \code{effect_size_filter = TRUE}.
 #' @importFrom S4Vectors DataFrame complete.cases
 #' @import fgsea
 #' @family paired
@@ -40,6 +52,9 @@
 #'     min_size = 25,
 #'     experiment_title = NULL,
 #'     expression_only = FALSE,
+#'     effect_size_filter = TRUE,
+#'     expression_lfc_cutoff = log2(1.5),
+#'     splicing_dif_cutoff = 0.1,
 #'     quiet = FALSE
 #'     )
 #' @examples 
@@ -58,10 +73,15 @@ paired_ora <- function(
         min_size = 25,
         experiment_title = NULL,
         expression_only = FALSE,
+        effect_size_filter = TRUE,
+        expression_lfc_cutoff = log2(1.5),
+        splicing_dif_cutoff = 0.1,
         quiet = FALSE){
     ## Initial error checks
-    stopifnot(is(c(quiet, expression_only), "logical"))
-    stopifnot(is(c(cutoff, min_size), "numeric"))
+    stopifnot(is(c(quiet, expression_only, effect_size_filter), "logical"))
+    stopifnot(is(c(
+        cutoff, min_size, expression_lfc_cutoff, splicing_dif_cutoff),
+        "numeric"))
     stopifnot(
         is(paired_diff_result, "data.frame") | is(paired_diff_result, "DFrame")
         )
@@ -74,6 +94,9 @@ paired_ora <- function(
         colnames(paired_diff_result)[
             which(colnames(paired_diff_result) == "padj")] <-
             "padj_expression"
+        colnames(paired_diff_result)[
+            which(colnames(paired_diff_result) == "lfc")] <-
+            "lfc_expression"
     } else{
         check_colname(
             paired_diff_result, "pvalue_splicing", "paired_diff_result")
@@ -86,7 +109,10 @@ paired_ora <- function(
     # fora on expression
     ora_expression <- run_ora(
         paired_diff_result, gene_sets = gene_sets,
-        type = "expression", cutoff = cutoff, min_size = min_size
+        type = "expression", cutoff = cutoff, min_size = min_size,
+        effect_size_filter = effect_size_filter,
+        expression_lfc_cutoff = expression_lfc_cutoff,
+        splicing_dif_cutoff = splicing_dif_cutoff
     )
     
     if(expression_only){
@@ -102,13 +128,19 @@ paired_ora <- function(
     # fora on splicing
     ora_splicing <- run_ora(
         paired_diff_result, gene_sets = gene_sets,
-        type = "splicing", cutoff = cutoff, min_size = min_size
+        type = "splicing", cutoff = cutoff, min_size = min_size,
+        effect_size_filter = effect_size_filter,
+        expression_lfc_cutoff = expression_lfc_cutoff,
+        splicing_dif_cutoff = splicing_dif_cutoff
     )
     
     # fora on paired
     ora_paired <- run_ora(
         paired_diff_result, gene_sets = gene_sets,
-        type = "paired", cutoff = cutoff, min_size = min_size
+        type = "paired", cutoff = cutoff, min_size = min_size,
+        effect_size_filter = effect_size_filter,
+        expression_lfc_cutoff = expression_lfc_cutoff,
+        splicing_dif_cutoff = splicing_dif_cutoff
     )
     
     if(!quiet) message("Joining result")
@@ -180,7 +212,10 @@ prepare_msigdb <- function(
 #' Run ORA on expression or splicing results
 #' @noRd
 run_ora <- function(
-        paired_diff_result, gene_sets, type, cutoff, min_size){
+        paired_diff_result, gene_sets, type, cutoff, min_size,
+        effect_size_filter = FALSE,
+        expression_lfc_cutoff = log2(1.5),
+        splicing_dif_cutoff = 0.1){
     
     if(type == "splicing") {
         paired_diff_result <- paired_diff_result[
@@ -197,7 +232,12 @@ run_ora <- function(
     universe <- unique(paired_diff_result$gene)
     # Subset significant genes
     sig_genes <- subset_genes(
-        paired_diff_result, type = type, cutoff = cutoff)
+        paired_diff_result,
+        type = type,
+        cutoff = cutoff,
+        effect_size_filter = effect_size_filter,
+        expression_lfc_cutoff = expression_lfc_cutoff,
+        splicing_dif_cutoff = splicing_dif_cutoff)
     
     # ORA on results
     ora <- fgsea::fora(
@@ -224,14 +264,37 @@ compute_enrichment <- function(ora, n_genes, n_universe){
 
 #' Subset genes to cutoff
 #' @noRd
-subset_genes <- function(paired_diff_result, type, cutoff){
+subset_genes <- function(
+        paired_diff_result,
+        type,
+        cutoff,
+        effect_size_filter = FALSE,
+        expression_lfc_cutoff = log2(1.5),
+        splicing_dif_cutoff = 0.1){
+
+    if(effect_size_filter) {
+        check_effect_size_columns(paired_diff_result, type)
+    }
     
     if(type == "paired"){
         paired_diff_result$padj_splicing[
             is.na(paired_diff_result$padj_splicing)] <- 1
+        expression_sig <- paired_diff_result[, "padj_expression"] < cutoff
+        splicing_sig <- paired_diff_result[, "padj_splicing"] < cutoff
+        if(effect_size_filter) {
+            expression_sig <- expression_sig &
+                !is.na(paired_diff_result[, "lfc_expression"]) &
+                abs(paired_diff_result[, "lfc_expression"]) >=
+                    expression_lfc_cutoff
+            splicing_sig <- splicing_sig &
+                !is.na(paired_diff_result[, "max_abs_dif_splicing"]) &
+                paired_diff_result[, "max_abs_dif_splicing"] >=
+                    splicing_dif_cutoff
+        }
+        expression_sig[is.na(expression_sig)] <- FALSE
+        splicing_sig[is.na(splicing_sig)] <- FALSE
         sig_genes <- paired_diff_result[
-            (paired_diff_result[, "padj_expression"] < cutoff
-            | (paired_diff_result[, "padj_splicing"] < cutoff)), ]
+            (expression_sig | splicing_sig), ]
     } else{ # Expression or splicing only
         padj_col <- ifelse(
             type == "expression", "padj_expression", "padj_splicing")
@@ -241,9 +304,40 @@ subset_genes <- function(paired_diff_result, type, cutoff){
                 paste0("pvalue_", type), "gene", padj_col)]),]
         sig_genes <- sig_genes[
             sig_genes[[padj_col]] < cutoff, ]
+
+        if(effect_size_filter) {
+            if(type == "expression") {
+                sig_genes <- sig_genes[
+                    !is.na(sig_genes$lfc_expression) &
+                    abs(sig_genes$lfc_expression) >= expression_lfc_cutoff, ]
+            } else{
+                sig_genes <- sig_genes[
+                    !is.na(sig_genes$max_abs_dif_splicing) &
+                    sig_genes$max_abs_dif_splicing >= splicing_dif_cutoff, ]
+            }
+        }
     }
     
     return(sig_genes)
+}
+
+#' Check effect size columns are available for ORA filtering
+#' @noRd
+check_effect_size_columns <- function(paired_diff_result, type) {
+    if(type %in% c("expression", "paired")) {
+        check_colname(
+            paired_diff_result, "lfc_expression", "paired_diff_result")
+    }
+    if(type %in% c("splicing", "paired")) {
+        if(!("max_abs_dif_splicing" %in% colnames(paired_diff_result))) {
+            stop(
+                "Splicing effect-size filtering requires column ",
+                "\"max_abs_dif_splicing\". Rerun paired_diff() with ",
+                "compute_splicing_dif = TRUE, or call paired_ora() with ",
+                "effect_size_filter = FALSE.",
+                call. = FALSE)
+        }
+    }
 }
 
 #' Join ORA results

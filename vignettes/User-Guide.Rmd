@@ -302,6 +302,14 @@ ora <- paired_ora(
 
 ```
 
+By default, `paired_ora()` applies effect-size filtering before ORA:
+expression genes must pass `abs(log2FC) >= log2(1.5)`, and splicing
+genes must pass `abs(dIF) >= 0.1`. The splicing effect size is stored as
+`max_abs_dif_splicing` by `paired_diff()` and is calculated from isoform
+fractions using `IsoformSwitchAnalyzeR::isoformToIsoformFraction()`. To
+use the previous adjusted p-value-only behavior, set
+`effect_size_filter = FALSE`.
+
 ```{r, include=FALSE}
 # ignore. To fix build fails
 if (sum(ora$padj_splicing < 0.05, na.rm = TRUE) < 20 ) {
@@ -317,6 +325,9 @@ if (sum(ora$padj_splicing < 0.05, na.rm = TRUE) < 20 ) {
 ```{r ora_settings, eval=FALSE}
 cutoff = 0.05,
 min_size = 25,
+effect_size_filter = TRUE,
+expression_lfc_cutoff = log2(1.5),
+splicing_dif_cutoff = 0.1,
 quiet = FALSE
 ```
 

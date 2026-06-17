@@ -11,6 +11,9 @@ paired_ora(
     min_size = 25,
     experiment_title = NULL,
     expression_only = FALSE,
+    effect_size_filter = TRUE,
+    expression_lfc_cutoff = log2(1.5),
+    splicing_dif_cutoff = 0.1,
     quiet = FALSE
     )
 }
@@ -33,6 +36,21 @@ stored in \code{paste0("results/", experiment_title, "_fora.RDS")}.}
 A logical that indicates whether
 to only run \code{\link[DESeq2:DESeq]{DESeq2}} analysis.
 Not generally recommended.}
+
+\item{effect_size_filter}{(Default: \code{TRUE})
+A logical that indicates whether significant genes must also pass
+effect-size cutoffs before ORA. Expression uses
+\code{abs(lfc_expression) >= expression_lfc_cutoff}; splicing uses
+\code{max_abs_dif_splicing >= splicing_dif_cutoff}.
+Set to \code{FALSE} to use the previous adjusted p-value-only behavior.}
+
+\item{expression_lfc_cutoff}{(Default: \code{log2(1.5)})
+Absolute log2 fold-change cutoff used for expression genes when
+\code{effect_size_filter = TRUE}.}
+
+\item{splicing_dif_cutoff}{(Default: \code{0.1})
+Absolute isoform fraction difference cutoff used for splicing genes when
+\code{effect_size_filter = TRUE}.}
 
 \item{quiet}{(Default: \code{FALSE}) Whether to print messages}
 }
@@ -64,7 +82,7 @@ ora <- paired_ora(
 
 }
 \seealso{
-Other paired: 
-\code{\link{paired_diff}()}
+Other paired:
+\code{\link[=paired_diff]{paired_diff()}}
 }
 \concept{paired}

@@ -19,7 +19,7 @@
 #' This example result is used primarily to do package tests
 #' and for function man pages
 #' @return A `DataFrame`.
-#' @format A `DataFrame` with 954 rows and 7 columns.
+#' @format A `DataFrame` with 954 rows and 10 columns.
 #' @usage data("example_diff_result")
 "example_diff_result"
 

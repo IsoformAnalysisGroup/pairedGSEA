@@ -5,7 +5,7 @@
 \alias{example_diff_result}
 \title{Output of running paired_diff on example_se.}
 \format{
-A `DataFrame` with 954 rows and 7 columns.
+A `DataFrame` with 954 rows and 10 columns.
 }
 \usage{
 data("example_diff_result")

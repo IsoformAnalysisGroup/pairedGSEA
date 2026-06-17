@@ -136,6 +136,13 @@ ora <- paired_ora(
 #> Joining result
 ```
 
+By default, ORA now applies effect-size filtering before testing gene
+sets: expression genes must pass `abs(log2FC) >= log2(1.5)`, and
+splicing genes must pass `abs(dIF) >= 0.1` using the
+`max_abs_dif_splicing` column from `paired_diff()`. To reproduce the
+previous adjusted p-value-only behavior, use
+`paired_ora(..., effect_size_filter = FALSE)`.
+
 You can now plot the enrichment scores against each other and identify
 pathways of interest.
 
