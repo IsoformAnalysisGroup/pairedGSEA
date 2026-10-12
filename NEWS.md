@@ -1,3 +1,32 @@
+# pairedGSEA 1.13.1
+
+## Bug fixes
+
+* `paired_ora()`: the combined (paired) analysis now uses genes tested for
+  both expression and splicing as its universe; previously genes without a
+  splicing result were included. Missing paired results are now filled in
+  the paired columns instead of overwriting the splicing relative risk and
+  enrichment score. Affects paired ORA results since 1.1.0 (Bioconductor
+  3.18); expression-only and splicing-only ORA are unchanged.
+* `paired_diff()`: `test = "Wald"` no longer fails; the reduced model is
+  only used for the likelihood ratio test.
+* The reduced model for the likelihood ratio test now removes the group
+  term by name instead of the first term of the design.
+* `paired_diff()`: surrogate variable estimation is now seeded
+  (`sva_seed`), so results are reproducible between runs.
+
+## Changes
+
+* `paired_diff()`: the number of automatically estimated surrogate
+  variables is capped so that the model keeps enough residual degrees of
+  freedom (`sva_min_residual_df`). An optional upper limit can be set with
+  `sva_max_n`; when set, the number is also capped at the square root of the
+  number of samples. An exact request (`sva_n`) stops with an informative
+  error when it is unsafe instead of being reduced silently.
+* `paired_diff()`: SVA diagnostics (requested, estimated and retained
+  surrogate variables, residual degrees of freedom) are stored in
+  `metadata(result)$pairedGSEA_sva`.
+
 # pairedGSEA 1.7.0
 
 * Ensure compatibility with updated msigdbr and new R version

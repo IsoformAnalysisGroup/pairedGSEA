@@ -254,9 +254,9 @@ model matrix by setting `covariates` to a character vector of the
 specific names. This will be used in SVA, DGE, and DGS.
 3. Automatic SVA estimates the number of surrogate variables reproducibly.
 Set `run_sva = FALSE` to disable SVA, set `sva_n` to force an exact safe
-number, or set `sva_max_n = 10L` for the capped atlas mode. The capped mode
-uses the automatic estimate and applies the explicit, square-root, and
-residual-degrees-of-freedom ceilings.
+number, or set `sva_max_n = 10L` to cap the automatic estimate (it is then
+also capped at the square root of the number of samples and by the residual
+degrees of freedom).
 4. The test should be kept at default settings, but advanced users may use
 the "wald" test instead, if they wish.
 5. The `...` parameters will be fed to `DESeq2::DESeq`,
