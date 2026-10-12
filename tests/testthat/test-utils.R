@@ -99,6 +99,12 @@ test_that("reduce_formula returns NULL for formula with only one variable", {
     expect_equal(reduced_formula, "1")
 })
 
+test_that("reduce_formula removes a named term regardless of position", {
+    formula <- as.formula("~ batch + treatment + subject")
+    reduced_formula <- reduce_formula(formula, term = "treatment")
+    expect_equal(as.character(reduced_formula)[2], "batch + subject")
+})
+
 # Test convert_matrix_to_dds and pre_filter
 test_that("convert_matrix_to_dds converts matrix to DESeq2 object", {
     # Create example count matrix

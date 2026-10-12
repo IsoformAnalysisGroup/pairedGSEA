@@ -18,6 +18,8 @@ test_that("paired_diff works", {
     expect_s4_class(
         diff_results , "DFrame")
     expect_true(
+        "pairedGSEA_sva" %in% names(S4Vectors::metadata(diff_results)))
+    expect_true(
         all(c("padj_splicing", "padj_expression") %in% colnames(diff_results)))
     expect_gt(
         nrow(diff_results), 0)
@@ -57,6 +59,24 @@ test_that("paired_diff works with matrix", {
         all(c("padj_splicing", "padj_expression") %in% colnames(diff_results)))
     expect_gt(
         nrow(diff_results), 0)
+})
+
+test_that("paired_diff supports expression-only Wald tests", {
+    diff_results <- suppressWarnings(
+        paired_diff(
+            object = test_se,
+            group_col = "group_nr",
+            sample_col = "id",
+            baseline = "1",
+            case = "2",
+            run_sva = FALSE,
+            expression_only = TRUE,
+            test = "wald",
+            fit_type = "mean",
+            quiet = TRUE))
+
+    expect_s4_class(diff_results, "DFrame")
+    expect_true(all(c("pvalue", "padj", "lfc") %in% colnames(diff_results)))
 })
 
 test_that("paired_diff works with rownames", {
@@ -450,6 +470,22 @@ test_that("run_deseq returns correct values", {
     expect_true(all(!is.na(expression_results$transcript)))
 })
 
+test_that("run_deseq executes Wald without a reduced model", {
+    wald_results <- run_deseq(
+        test_dds,
+        group_col = "group_nr",
+        baseline = "1",
+        case = "2",
+        test = "wald",
+        fit_type = "mean",
+        quiet = TRUE)
+
+    expect_s4_class(wald_results, "DFrame")
+    expect_named(wald_results, c(
+        "gene", "transcript", "lfc", "pvalue", "padj", "baseMean"))
+    expect_error(normalize_differential_test("score"), "LRT.*Wald")
+})
+
 test_that("run_deseq handles invalid arguments", {
     expect_error(run_deseq(
         test_dds, group_col = "invalid", baseline = "1", case = "2", quiet = TRUE),
@@ -457,13 +493,99 @@ test_that("run_deseq handles invalid arguments", {
 })
 
 
-test_that("run_sva finds surrogate variables",{
-    
-    test_dds <- DESeqDataSetFromMatrix(countData = assay(example_se), colData = colData(example_se), design = ~group_nr)
-    
-    set.seed(500)
-    sva_dds <- run_sva(test_dds)
-    
-    expect_true(grepl("sv", as.character(DESeq2::design(sva_dds))[2]))
-    
+test_that("SVA count selection distinguishes automatic, capped, and fixed", {
+    automatic <- select_sva_n(
+        n_samples = 16, model_rank = 2, estimated_n = 8,
+        sva_min_residual_df = 3)
+    capped <- select_sva_n(
+        n_samples = 16, model_rank = 2, estimated_n = 8,
+        sva_max_n = 10, sva_min_residual_df = 3)
+    small <- select_sva_n(
+        n_samples = 4, model_rank = 2, estimated_n = 2,
+        sva_min_residual_df = 3)
+    fixed <- select_sva_n(
+        n_samples = 8, model_rank = 2, sva_n = 3,
+        sva_min_residual_df = 3)
+
+    expect_equal(automatic$selected_n, 8)
+    expect_equal(capped$selected_n, 4)
+    expect_equal(capped$square_root_cap, 4)
+    expect_equal(small$selected_n, 0)
+    expect_equal(fixed$selected_n, 3)
+    expect_error(
+        select_sva_n(
+            n_samples = 8, model_rank = 2, sva_n = 4,
+            sva_min_residual_df = 3),
+        "largest safe value is 3")
+})
+
+test_that("run_sva records disabled mode without changing the design", {
+    dds <- DESeqDataSetFromMatrix(
+        countData = assay(example_se),
+        colData = colData(example_se),
+        design = ~group_nr)
+    original_design <- DESeq2::design(dds)
+
+    result <- run_sva(
+        dds, group_col = "group_nr", enabled = FALSE, quiet = TRUE)
+    info <- S4Vectors::metadata(result)$pairedGSEA_sva
+
+    expect_identical(DESeq2::design(result), original_design)
+    expect_equal(info$mode, "disabled")
+    expect_equal(info$selected_n, 0)
+    expect_error(
+        run_sva(dds, enabled = FALSE, sva_n = 1, quiet = TRUE),
+        "cannot be set")
+})
+
+test_that("run_sva supports a safe fixed number of variables", {
+    dds <- DESeqDataSetFromMatrix(
+        countData = assay(example_se),
+        colData = colData(example_se),
+        design = ~group_nr)
+
+    result <- run_sva(
+        dds,
+        group_col = "group_nr",
+        sva_n = 1,
+        sva_min_residual_df = 3,
+        quiet = TRUE)
+    info <- S4Vectors::metadata(result)$pairedGSEA_sva
+
+    expect_equal(info$mode, "fixed")
+    expect_equal(info$selected_n, 1)
+    expect_lte(info$retained_n, 1)
+    expect_gte(info$final_residual_df, 3)
+})
+
+test_that("automatic SVA estimation is reproducible and preserves RNG state", {
+    dds <- DESeqDataSetFromMatrix(
+        countData = assay(example_se),
+        colData = colData(example_se),
+        design = ~group_nr)
+    normalized_counts <- assay(DESeq2::normTransform(dds))
+    mod <- stats::model.matrix(
+        ~group_nr, data = as.data.frame(colData(dds)))
+
+    set.seed(123)
+    original_seed <- .Random.seed
+    first <- estimate_sva_n(normalized_counts, mod, seed = 20260625L)
+    expect_identical(.Random.seed, original_seed)
+    second <- estimate_sva_n(normalized_counts, mod, seed = 20260625L)
+
+    expect_identical(first, second)
+    expect_identical(.Random.seed, original_seed)
+})
+
+test_that("confounded surrogate variables are removed", {
+    group <- c(0, 0, 0, 1, 1, 1)
+    mod <- cbind(intercept = 1, group = group)
+    svs <- data.frame(
+        sv1 = group,
+        sv2 = c(-1, 0, 1, -1, 0, 1))
+
+    filtered <- filter_confounding_svs(svs, mod)
+
+    expect_equal(filtered$removed_n, 1)
+    expect_named(filtered$svs, "sv2")
 })

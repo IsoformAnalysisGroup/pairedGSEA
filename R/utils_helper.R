@@ -130,25 +130,28 @@ formularise_vector <- function(vector){
     return(formula)
 }
 
-#' Reduce design formula by removing first variable
+#' Reduce a design formula by removing one variable
 #' 
-#' This internal function assumes the design formula has the format as
-#' imposed by \code{\link[pairedGSEA:formularise_vector]{formularise_vector()}}
-#' and that the defining variable is the first occurring variable in the design.
-#' @param formula Design formula to reduce. The first variable will be removed.
+#' @param formula Design formula to reduce.
 #' @param formularise (Default: TRUE) Logical determining if the design
 #' should be formularised
+#' @param term Optional term to remove. If omitted, the first term is removed
+#' for backwards compatibility.
 #' @noRd
-reduce_formula <- function(formula, formularise = TRUE){
-    # Convert design formula to character string
-    formula_vector <- strsplit(
-        as.character(formula)[2], split = " \\+ ", fixed = FALSE)
-    formula_vector <- unlist(formula_vector)
-    
-    # If design only contains 1 variable, return ~1
-    if(length(formula_vector) == 1) reduced_vector <- "1"
-    # Else, remove first variable
-    else reduced_vector <- formula_vector[2:length(formula_vector)]
+reduce_formula <- function(formula, formularise = TRUE, term = NULL){
+    formula_vector <- attr(stats::terms(formula), "term.labels")
+
+    if(length(formula_vector) == 0) {
+        reduced_vector <- "1"
+    } else{
+        if(is.null(term)) term <- formula_vector[1]
+        if(length(term) != 1 || !(term %in% formula_vector)) {
+            stop("Term '", term, "' was not found in the design formula.",
+                 call. = FALSE)
+        }
+        reduced_vector <- formula_vector[formula_vector != term]
+        if(length(reduced_vector) == 0) reduced_vector <- "1"
+    }
     
     if(formularise) return(formularise_vector(reduced_vector))
     

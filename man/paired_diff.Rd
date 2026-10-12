@@ -15,6 +15,10 @@ paired_diff(
     experiment_title = NULL,
     store_results = FALSE,
     run_sva = TRUE,
+    sva_n = NULL,
+    sva_seed = 20260625L,
+    sva_max_n = NULL,
+    sva_min_residual_df = 3L,
     use_limma = FALSE,
     prefilter = 10,
     test = "LRT",
@@ -59,6 +63,21 @@ be stored in the folder \code{"results/"}.}
 
 \item{run_sva}{(Default: \code{TRUE})
 A logical stating whether SVA should be run.}
+
+\item{sva_n}{(Default: \code{NULL}) Number of surrogate variables to use.
+\code{NULL} estimates the number from the data. A non-negative integer
+requests an exact number, subject to the residual degrees-of-freedom guard.}
+
+\item{sva_seed}{(Default: \code{20260625L}) Seed used by the permutation-based
+automatic \code{n.sv} estimator.}
+
+\item{sva_max_n}{(Default: \code{NULL}) Optional maximum for automatic SVA.
+When supplied, the selected number is also capped at
+\code{floor(sqrt(n_samples))}. This argument is not used with fixed
+\code{sva_n}.}
+
+\item{sva_min_residual_df}{(Default: \code{3L}) Minimum residual degrees of
+freedom that must remain after adding surrogate variables.}
 
 \item{use_limma}{(Default: \code{FALSE})
 A logical determining if \code{limma+voom} or
@@ -108,7 +127,8 @@ from the group and \code{covariate} columns}
 \code{\link[DESeq2:DESeq]{DESeq()}}}
 }
 \value{
-A DFrame of aggregated pvalues
+A DFrame of aggregated pvalues. SVA selection diagnostics are stored
+in \code{S4Vectors::metadata(result)$pairedGSEA_sva}.
 }
 \description{
 With \code{paired_diff} you can run a paired differential gene expression and

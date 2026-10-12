@@ -53,6 +53,52 @@ test_that("it subsets genes to a cutoff based on type", {
     expect_true(all(splicing_genes$padj_splicing < 0.05))
 })
 
+test_that("paired ORA universe requires expression and splicing results", {
+    toy_diff <- data.frame(
+        gene = paste0("g", 1:4),
+        pvalue_expression = c(0.01, 0.2, 0.01, 0.2),
+        padj_expression = c(0.01, 0.2, 0.01, 0.2),
+        pvalue_splicing = c(0.01, 0.2, NA, NA),
+        padj_splicing = c(0.01, 0.2, NA, NA)
+    )
+
+    ora_test <- run_ora(
+        toy_diff,
+        gene_sets = list(target = c("g1", "g3")),
+        type = "paired",
+        cutoff = 0.05,
+        min_size = 1)
+
+    expect_equal(ora_test$size, 1)
+    expect_equal(ora_test$overlap, 1)
+})
+
+test_that("join_oras fills paired columns without changing splicing", {
+    expression <- data.frame(
+        pathway = c("shared", "not_paired"),
+        relative_risk = c(2, 4),
+        enrichment_score = log2(c(2, 4) + 0.06))
+    splicing <- data.frame(
+        pathway = c("shared", "not_paired"),
+        relative_risk = c(3, 5),
+        enrichment_score = log2(c(3, 5) + 0.06))
+    paired <- data.frame(
+        pathway = "shared",
+        relative_risk = 6,
+        enrichment_score = log2(6 + 0.06)
+    )
+
+    joined <- join_oras(expression, splicing, paired)
+    missing_paired <- joined$pathway == "not_paired"
+
+    expect_equal(joined$relative_risk_splicing[missing_paired], 5)
+    expect_equal(
+        joined$enrichment_score_splicing[missing_paired], log2(5 + 0.06))
+    expect_equal(joined$relative_risk_paired[missing_paired], 0)
+    expect_equal(
+        joined$enrichment_score_paired[missing_paired], log2(0.06))
+})
+
 # Create a mock ORA data frame
 ora <- data.frame(
     pathway = c("Pathway A", "Pathway B", "Pathway C"),

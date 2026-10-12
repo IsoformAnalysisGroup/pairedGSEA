@@ -38,6 +38,17 @@
 #' stored in \code{paste0("results/", experiment_title, "_pairedGSEA.RDS")}.
 #' @param run_sva (Default: \code{TRUE})
 #' A logical stating whether SVA should be run.
+#' @param sva_n (Default: \code{NULL}) Number of surrogate variables to use.
+#' \code{NULL} estimates the number from the data. A non-negative integer
+#' requests an exact number, subject to the residual degrees-of-freedom guard.
+#' @param sva_seed (Default: \code{20260625L}) Seed used by the permutation-based
+#' automatic \code{n.sv} estimator.
+#' @param sva_max_n (Default: \code{NULL}) Optional maximum for automatic SVA.
+#' When supplied, the selected number is also capped at
+#' \code{floor(sqrt(n_samples))}. This argument is not used with fixed
+#' \code{sva_n}.
+#' @param sva_min_residual_df (Default: \code{3L}) Minimum residual degrees of
+#' freedom that must remain after adding surrogate variables.
 #' @param use_limma (Default: \code{FALSE})
 #' A logical determining if \code{limma+voom} or
 #' \code{DESeq2} + \code{DEXSeq} should be used for the analysis
@@ -81,7 +92,8 @@
 #' @import DESeq2
 #' @import DEXSeq
 #' @import BiocParallel
-#' @return A DFrame of aggregated pvalues
+#' @return A DFrame of aggregated pvalues. SVA selection diagnostics are stored
+#' in \code{S4Vectors::metadata(result)$pairedGSEA_sva}.
 #' @usage 
 #' paired_diff(
 #'     object,
@@ -94,6 +106,10 @@
 #'     experiment_title = NULL,
 #'     store_results = FALSE,
 #'     run_sva = TRUE,
+#'     sva_n = NULL,
+#'     sva_seed = 20260625L,
+#'     sva_max_n = NULL,
+#'     sva_min_residual_df = 3L,
 #'     use_limma = FALSE,
 #'     prefilter = 10,
 #'     test = "LRT",
@@ -132,6 +148,10 @@ paired_diff <- function(
         experiment_title = NULL,
         store_results = FALSE,
         run_sva = TRUE,
+        sva_n = NULL,
+        sva_seed = 20260625L,
+        sva_max_n = NULL,
+        sva_min_residual_df = 3L,
         use_limma = FALSE,
         prefilter = 10,
         test = "LRT",
@@ -267,10 +287,16 @@ paired_diff <- function(
     # Prefiltering
     if(prefilter) dds <- pre_filter(dds, prefilter, quiet = quiet)
 
-    # Detect surrogate variables
-    if(run_sva){
-        dds <- run_sva(dds, quiet = quiet)
-    }
+    # Detect surrogate variables and retain an audit record for every mode
+    dds <- run_sva(
+        dds,
+        group_col = group_col,
+        enabled = run_sva,
+        sva_n = sva_n,
+        sva_seed = sva_seed,
+        sva_max_n = sva_max_n,
+        sva_min_residual_df = sva_min_residual_df,
+        quiet = quiet)
     
     if(use_limma){
         # Run limma
@@ -308,6 +334,8 @@ paired_diff <- function(
         if(expression_only){
             expression_aggregated <- aggregate_pvalue(
                 expression_results, type = "expression")
+            expression_aggregated <- attach_sva_diagnostics(
+                expression_aggregated, dds)
             
             if(store_results) store_result(
                 expression_aggregated, paste0(
@@ -354,6 +382,8 @@ paired_diff <- function(
         all = TRUE
     )
 
+
+    aggregated_pvals <- attach_sva_diagnostics(aggregated_pvals, dds)
 
     if(store_results) store_result(
         aggregated_pvals, paste0(experiment_title, "_aggregated_pvals.RDS"),
@@ -458,56 +488,340 @@ convert_matrix_to_dds <- function(tx_count, metadata, design){
 #' @keywords internal
 #' @noRd
 #' @return A DESeqDataSet
-run_sva <- function(dds, quiet = FALSE) {
-    if (!quiet) message("Running SVA")
-    
-    # Normalize counts with DESeq2 for SVA
-    normalized_counts <- SummarizedExperiment::assay(
-        DESeq2::normTransform(dds)
-        )
-    
-    # Extract metadata
+run_sva <- function(
+        dds,
+        group_col = NULL,
+        enabled = TRUE,
+        sva_n = NULL,
+        sva_seed = 20260625L,
+        sva_max_n = NULL,
+        sva_min_residual_df = 3L,
+        quiet = FALSE) {
+    validate_sva_control(
+        enabled, sva_n, sva_seed, sva_max_n, sva_min_residual_df)
+
     metadata <- SummarizedExperiment::colData(dds)
-    
-    # Get dds design
     design <- DESeq2::design(dds)
-    reduced <- reduce_formula(design)
-    
-    # Define model matrix
+    design_terms <- attr(stats::terms(design), "term.labels")
+    if(is.null(group_col)) group_col <- design_terms[1]
+    reduced <- reduce_formula(design, term = group_col)
     mod1 <- stats::model.matrix(design, data = metadata)
     mod0 <- stats::model.matrix(reduced, data = metadata)
-    
-    # Run SVA
-    svseq <- sva::sva(normalized_counts, mod = mod1, mod0 = mod0)
-    if (!quiet) message("\nFound ", svseq$n.sv, " surrogate variables")
-    
-    if (svseq$n.sv == 0) return(dds)
-    
-    # Store surrogate variables and rename for ease of reference
+    n_samples <- nrow(mod1)
+    model_rank <- qr(mod1)$rank
+    residual_df_cap <- max(
+        0L, n_samples - model_rank - as.integer(sva_min_residual_df))
+
+    if(!enabled) {
+        info <- make_sva_diagnostics(
+            mode = "disabled",
+            n_samples = n_samples,
+            model_rank = model_rank,
+            min_residual_df = sva_min_residual_df,
+            residual_df_cap = residual_df_cap)
+        return(set_sva_diagnostics(dds, info))
+    }
+
+    if (!quiet) message("Running SVA")
+    normalized_counts <- SummarizedExperiment::assay(
+        DESeq2::normTransform(dds))
+
+    estimated_n <- NA_integer_
+    if(is.null(sva_n)) {
+        estimated_n <- estimate_sva_n(
+            normalized_counts, mod1, seed = sva_seed)
+    }
+    selection <- select_sva_n(
+        n_samples = n_samples,
+        model_rank = model_rank,
+        estimated_n = estimated_n,
+        sva_n = sva_n,
+        sva_max_n = sva_max_n,
+        sva_min_residual_df = sva_min_residual_df)
+
+    if(!quiet) {
+        if(is.na(selection$estimated_n)) {
+            message("Using ", selection$selected_n,
+                    " explicitly requested surrogate variables")
+        } else{
+            message(
+                "Estimated ", selection$estimated_n,
+                " surrogate variables; selected ", selection$selected_n)
+        }
+    }
+
+    if(selection$selected_n == 0) {
+        info <- make_sva_diagnostics(
+            mode = selection$mode,
+            seed = if(is.null(sva_n)) sva_seed else NA_integer_,
+            requested_n = sva_n,
+            estimated_n = selection$estimated_n,
+            max_n = sva_max_n,
+            square_root_cap = selection$square_root_cap,
+            n_samples = n_samples,
+            model_rank = model_rank,
+            min_residual_df = sva_min_residual_df,
+            residual_df_cap = selection$residual_df_cap)
+        return(set_sva_diagnostics(dds, info))
+    }
+
+    svseq <- sva::sva(
+        normalized_counts,
+        mod = mod1,
+        mod0 = mod0,
+        n.sv = selection$selected_n)
+
     svs <- data.frame(svseq$sv)
-    colnames(svs) <- paste0("sv", seq_len(svseq$n.sv))
-    
-    # Remove svs that confound with mod1
-    cors <- as.matrix(stats::cor(svs, mod1[, seq.int(2, ncol(mod1))]))
-    cors[abs(cors) > 0.8] <- NA
-    if (any(is.na(cors)) & !quiet)
-        message("Removing surrogate variables confounding with design model.")
-    cors <- stats::na.omit(cors)
-    svs <- svs[, rownames(cors), drop = FALSE]
-    
-    if (!quiet) message("Redefining DESeq2 design formula\n")
-    
-    # Add svs to dds colData
-    SummarizedExperiment::colData(dds) <- cbind(metadata, svs)
-    
-    # Redefine design formula to include svs
-    design_vars <- unlist(strsplit(as.character(design)[2], " \\+ "))
-    design_vars <- c(design_vars, colnames(svs))
-    DESeq2::design(dds) <- formularise_vector(design_vars)
-    
-    return(dds)
+    colnames(svs) <- paste0("sv", seq_len(selection$selected_n))
+    filtered <- filter_confounding_svs(svs, mod1)
+    svs <- filtered$svs
+    if(filtered$removed_n > 0 && !quiet) {
+        message(
+            "Removing ", filtered$removed_n,
+            " surrogate variables confounding with the design model.")
+    }
+
+    if(ncol(svs) > 0) {
+        SummarizedExperiment::colData(dds) <- cbind(metadata, svs)
+        DESeq2::design(dds) <- formularise_vector(
+            c(design_terms, colnames(svs)))
+    }
+
+    final_model <- stats::model.matrix(
+        DESeq2::design(dds),
+        data = SummarizedExperiment::colData(dds))
+    final_model_rank <- qr(final_model)$rank
+    retained_n <- ncol(svs)
+    info <- make_sva_diagnostics(
+        mode = selection$mode,
+        seed = if(is.null(sva_n)) sva_seed else NA_integer_,
+        requested_n = sva_n,
+        estimated_n = selection$estimated_n,
+        max_n = sva_max_n,
+        square_root_cap = selection$square_root_cap,
+        n_samples = n_samples,
+        model_rank = model_rank,
+        final_model_rank = final_model_rank,
+        min_residual_df = sva_min_residual_df,
+        residual_df_cap = selection$residual_df_cap,
+        selected_n = selection$selected_n,
+        retained_n = retained_n,
+        removed_confounding_n = filtered$removed_n)
+
+    if(!quiet) {
+        message(
+            "Retained ", retained_n, " surrogate variables; ",
+            info$final_residual_df, " residual degrees of freedom remain\n")
+    }
+    set_sva_diagnostics(dds, info)
 }
 
+
+validate_sva_control <- function(
+        enabled, sva_n, sva_seed, sva_max_n, sva_min_residual_df) {
+    if(!is.logical(enabled) || length(enabled) != 1 || is.na(enabled)) {
+        stop("'run_sva' must be TRUE or FALSE.", call. = FALSE)
+    }
+
+    check_integer <- function(value, name, minimum = 0L, allow_null = TRUE) {
+        if(is.null(value) && allow_null) return(invisible(TRUE))
+        valid <- is.numeric(value) && length(value) == 1 &&
+            !is.na(value) && is.finite(value) &&
+            value == floor(value) && value >= minimum &&
+            value <= .Machine$integer.max
+        if(!valid) {
+            stop(
+                "'", name, "' must be ",
+                if(allow_null) "NULL or " else "",
+                "a single integer >= ", minimum, ".", call. = FALSE)
+        }
+        invisible(TRUE)
+    }
+
+    check_integer(sva_n, "sva_n")
+    check_integer(sva_seed, "sva_seed", allow_null = FALSE)
+    check_integer(sva_max_n, "sva_max_n")
+    check_integer(
+        sva_min_residual_df, "sva_min_residual_df",
+        minimum = 1L, allow_null = FALSE)
+
+    if(!enabled && (!is.null(sva_n) || !is.null(sva_max_n))) {
+        stop(
+            "'sva_n' and 'sva_max_n' cannot be set when run_sva = FALSE.",
+            call. = FALSE)
+    }
+    if(!is.null(sva_n) && !is.null(sva_max_n)) {
+        stop(
+            "'sva_max_n' applies only to automatic SVA; do not combine it ",
+            "with a fixed 'sva_n'.", call. = FALSE)
+    }
+    invisible(TRUE)
+}
+
+
+select_sva_n <- function(
+        n_samples,
+        model_rank,
+        estimated_n = NA_integer_,
+        sva_n = NULL,
+        sva_max_n = NULL,
+        sva_min_residual_df = 3L) {
+    residual_df_cap <- max(
+        0L,
+        as.integer(n_samples) - as.integer(model_rank) -
+            as.integer(sva_min_residual_df))
+
+    if(!is.null(sva_n)) {
+        requested_n <- as.integer(sva_n)
+        if(requested_n > residual_df_cap) {
+            stop(
+                "Requested sva_n = ", requested_n, " would leave fewer than ",
+                sva_min_residual_df, " residual degrees of freedom. ",
+                "The largest safe value is ", residual_df_cap, ".",
+                call. = FALSE)
+        }
+        return(list(
+            mode = "fixed",
+            estimated_n = NA_integer_,
+            square_root_cap = NA_integer_,
+            residual_df_cap = residual_df_cap,
+            selected_n = requested_n))
+    }
+
+    if(length(estimated_n) != 1 || is.na(estimated_n) ||
+            !is.finite(estimated_n) || estimated_n < 0) {
+        stop("Automatic SVA requires a valid estimated n.sv.", call. = FALSE)
+    }
+    estimated_n <- as.integer(estimated_n)
+
+    if(is.null(sva_max_n)) {
+        mode <- "automatic"
+        square_root_cap <- NA_integer_
+        selected_n <- min(estimated_n, residual_df_cap)
+    } else{
+        mode <- "automatic_capped"
+        square_root_cap <- as.integer(floor(sqrt(n_samples)))
+        selected_n <- min(
+            estimated_n,
+            as.integer(sva_max_n),
+            square_root_cap,
+            residual_df_cap)
+    }
+
+    list(
+        mode = mode,
+        estimated_n = estimated_n,
+        square_root_cap = square_root_cap,
+        residual_df_cap = residual_df_cap,
+        selected_n = as.integer(selected_n))
+}
+
+
+preserve_rng_state <- function(code) {
+    seed_name <- ".Random.seed"
+    had_seed <- exists(seed_name, envir = .GlobalEnv, inherits = FALSE)
+    if(had_seed) {
+        old_seed <- get(seed_name, envir = .GlobalEnv, inherits = FALSE)
+    }
+    on.exit({
+        if(had_seed) {
+            assign(seed_name, old_seed, envir = .GlobalEnv)
+        } else if(exists(seed_name, envir = .GlobalEnv, inherits = FALSE)) {
+            rm(list = seed_name, envir = .GlobalEnv)
+        }
+    }, add = TRUE)
+    code()
+}
+
+
+estimate_sva_n <- function(dat, mod, seed = 20260625L) {
+    as.integer(preserve_rng_state(function() {
+        sva::num.sv(dat, mod, method = "be", seed = as.integer(seed))
+    }))
+}
+
+
+filter_confounding_svs <- function(svs, mod, threshold = 0.8) {
+    svs <- as.data.frame(svs)
+    if(ncol(svs) == 0 || ncol(mod) <= 1) {
+        return(list(svs = svs, removed_n = 0L))
+    }
+
+    cors <- suppressWarnings(stats::cor(
+        svs, mod[, seq.int(2, ncol(mod)), drop = FALSE]))
+    remove <- apply(cors, 1, function(x) {
+        any(!is.finite(x) | abs(x) > threshold)
+    })
+    list(
+        svs = svs[, !remove, drop = FALSE],
+        removed_n = as.integer(sum(remove)))
+}
+
+
+make_sva_diagnostics <- function(
+        mode,
+        seed = NA_integer_,
+        requested_n = NULL,
+        estimated_n = NA_integer_,
+        max_n = NULL,
+        square_root_cap = NA_integer_,
+        n_samples,
+        model_rank,
+        final_model_rank = model_rank,
+        min_residual_df,
+        residual_df_cap,
+        selected_n = 0L,
+        retained_n = 0L,
+        removed_confounding_n = 0L) {
+    list(
+        mode = mode,
+        seed = as.integer(seed),
+        requested_n = if(is.null(requested_n)) NA_integer_ else
+            as.integer(requested_n),
+        estimated_n = as.integer(estimated_n),
+        max_n = if(is.null(max_n)) NA_integer_ else as.integer(max_n),
+        square_root_cap = as.integer(square_root_cap),
+        residual_df_cap = as.integer(residual_df_cap),
+        selected_n = as.integer(selected_n),
+        capped_n = as.integer(selected_n),
+        retained_n = as.integer(retained_n),
+        removed_confounding_n = as.integer(removed_confounding_n),
+        n_samples = as.integer(n_samples),
+        model_rank = as.integer(model_rank),
+        final_model_rank = as.integer(final_model_rank),
+        min_residual_df = as.integer(min_residual_df),
+        final_residual_df = as.integer(n_samples - final_model_rank))
+}
+
+
+set_sva_diagnostics <- function(dds, info) {
+    object_metadata <- S4Vectors::metadata(dds)
+    object_metadata$pairedGSEA_sva <- info
+    S4Vectors::metadata(dds) <- object_metadata
+    dds
+}
+
+
+attach_sva_diagnostics <- function(result, dds) {
+    info <- S4Vectors::metadata(dds)$pairedGSEA_sva
+    result_metadata <- S4Vectors::metadata(result)
+    result_metadata$pairedGSEA_sva <- info
+    S4Vectors::metadata(result) <- result_metadata
+    result
+}
+
+
+
+normalize_differential_test <- function(test) {
+    if(!is.character(test) || length(test) != 1 || is.na(test)) {
+        stop("'test' must be either \"LRT\" or \"Wald\".", call. = FALSE)
+    }
+    normalized <- toupper(test)
+    if(!(normalized %in% c("LRT", "WALD"))) {
+        stop("'test' must be either \"LRT\" or \"Wald\".", call. = FALSE)
+    }
+    if(normalized == "WALD") "Wald" else "LRT"
+}
 
 
 #' Run DESeq2 analysis
@@ -556,19 +870,38 @@ run_deseq <- function(
         ...){
     
     if(!quiet) message("Running DESeq2")
+    test <- normalize_differential_test(test)
+    if(!(group_col %in% all.vars(DESeq2::design(dds)))) {
+        stop(
+            group_col,
+            " should be the name of a factor in the colData of the ",
+            "DESeqDataSet", call. = FALSE)
+    }
     
-    # Reduce design formula to surrogate variables and covariates
-    reduced <- reduce_formula(DESeq2::design(dds))
-    
-    dds <- DESeq2::DESeq(
-        dds,
-        reduced = reduced,
-        test = test,
-        parallel = parallel, 
-        BPPARAM = BPPARAM,
-        fitType = fit_type,
-        quiet = quiet,
-        ...)
+    if(test == "LRT") {
+        # Reduced model: remove the group term, keep surrogate variables
+        # and covariates
+        reduced <- reduce_formula(
+            DESeq2::design(dds), term = group_col)
+        dds <- DESeq2::DESeq(
+            dds,
+            reduced = reduced,
+            test = test,
+            parallel = parallel,
+            BPPARAM = BPPARAM,
+            fitType = fit_type,
+            quiet = quiet,
+            ...)
+    } else{
+        dds <- DESeq2::DESeq(
+            dds,
+            test = test,
+            parallel = parallel,
+            BPPARAM = BPPARAM,
+            fitType = fit_type,
+            quiet = quiet,
+            ...)
+    }
     
     # Store DESeqDataSet with DESeq2 analysis
     if(store_results) {
