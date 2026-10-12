@@ -191,7 +191,7 @@ run_ora <- function(
     } else if(type == "paired"){
         paired_diff_result <- paired_diff_result[
             !is.na(paired_diff_result$padj_expression)
-            & !is.na(paired_diff_result$padj_expression),]
+            & !is.na(paired_diff_result$padj_splicing),]
     }
 
     universe <- unique(paired_diff_result$gene)
@@ -273,9 +273,9 @@ join_oras <- function(ora_expression, ora_splicing, ora_paired){
         is.na(ora_joined$relative_risk_splicing)] <- 0
     ora_joined$enrichment_score_splicing[
         is.na(ora_joined$enrichment_score_splicing)] <- log2(0.06)
-    ora_joined$relative_risk_splicing[
+    ora_joined$relative_risk_paired[
         is.na(ora_joined$relative_risk_paired)] <- 0
-    ora_joined$enrichment_score_splicing[
+    ora_joined$enrichment_score_paired[
         is.na(ora_joined$enrichment_score_paired)] <- log2(0.06)
     # Compute shifts in relative risk and enrichment scores
     ora_joined$relative_risk_shift <- 
