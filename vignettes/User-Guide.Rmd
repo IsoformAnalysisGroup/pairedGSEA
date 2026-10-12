@@ -231,6 +231,10 @@ See `?pairedGSEA::paired_diff` for further details.
 ```{r extra_settings, eval=FALSE}
 covariates = NULL,
 run_sva = TRUE,
+sva_n = NULL,
+sva_seed = 20260625L,
+sva_max_n = NULL,
+sva_min_residual_df = 3L,
 use_limma = FALSE,
 prefilter = 10,
 fit_type = "local",
@@ -248,11 +252,16 @@ To highlight some examples of use:
 2. You can use additional columns in your metadata as covariates in the
 model matrix by setting `covariates` to a character vector of the
 specific names. This will be used in SVA, DGE, and DGS.
-3. The test should be kept at default settings, but advanced users may use
+3. Automatic SVA estimates the number of surrogate variables reproducibly.
+Set `run_sva = FALSE` to disable SVA, set `sva_n` to force an exact safe
+number, or set `sva_max_n = 10L` for the capped atlas mode. The capped mode
+uses the automatic estimate and applies the explicit, square-root, and
+residual-degrees-of-freedom ceilings.
+4. The test should be kept at default settings, but advanced users may use
 the "wald" test instead, if they wish.
-4. The `...` parameters will be fed to `DESeq2::DESeq`,
+5. The `...` parameters will be fed to `DESeq2::DESeq`,
 see their manual for options.
-5. If you want a stricter, more loose, or more advanced pre-filtering
+6. If you want a stricter, more loose, or more advanced pre-filtering
 (generally not necessary, as `r  BiocStyle::Biocpkg("DESeq2")` 
 and `r  BiocStyle::Biocpkg("DEXSeq")` performs their own
 pre-filtering), you can set the parameter to a different value or NULL and
