@@ -812,6 +812,18 @@ attach_sva_diagnostics <- function(result, dds) {
 
 
 
+normalize_differential_test <- function(test) {
+    if(!is.character(test) || length(test) != 1 || is.na(test)) {
+        stop("'test' must be either \"LRT\" or \"Wald\".", call. = FALSE)
+    }
+    normalized <- toupper(test)
+    if(!(normalized %in% c("LRT", "WALD"))) {
+        stop("'test' must be either \"LRT\" or \"Wald\".", call. = FALSE)
+    }
+    if(normalized == "WALD") "Wald" else "LRT"
+}
+
+
 #' Run DESeq2 analysis
 #' 
 #' This internal function runs a differential gene expression analysis using
@@ -858,19 +870,38 @@ run_deseq <- function(
         ...){
     
     if(!quiet) message("Running DESeq2")
+    test <- normalize_differential_test(test)
+    if(!(group_col %in% all.vars(DESeq2::design(dds)))) {
+        stop(
+            group_col,
+            " should be the name of a factor in the colData of the ",
+            "DESeqDataSet", call. = FALSE)
+    }
     
-    # Reduce design formula to surrogate variables and covariates
-    reduced <- reduce_formula(DESeq2::design(dds))
-    
-    dds <- DESeq2::DESeq(
-        dds,
-        reduced = reduced,
-        test = test,
-        parallel = parallel, 
-        BPPARAM = BPPARAM,
-        fitType = fit_type,
-        quiet = quiet,
-        ...)
+    if(test == "LRT") {
+        # Reduced model: remove the group term, keep surrogate variables
+        # and covariates
+        reduced <- reduce_formula(
+            DESeq2::design(dds), term = group_col)
+        dds <- DESeq2::DESeq(
+            dds,
+            reduced = reduced,
+            test = test,
+            parallel = parallel,
+            BPPARAM = BPPARAM,
+            fitType = fit_type,
+            quiet = quiet,
+            ...)
+    } else{
+        dds <- DESeq2::DESeq(
+            dds,
+            test = test,
+            parallel = parallel,
+            BPPARAM = BPPARAM,
+            fitType = fit_type,
+            quiet = quiet,
+            ...)
+    }
     
     # Store DESeqDataSet with DESeq2 analysis
     if(store_results) {

@@ -61,6 +61,24 @@ test_that("paired_diff works with matrix", {
         nrow(diff_results), 0)
 })
 
+test_that("paired_diff supports expression-only Wald tests", {
+    diff_results <- suppressWarnings(
+        paired_diff(
+            object = test_se,
+            group_col = "group_nr",
+            sample_col = "id",
+            baseline = "1",
+            case = "2",
+            run_sva = FALSE,
+            expression_only = TRUE,
+            test = "wald",
+            fit_type = "mean",
+            quiet = TRUE))
+
+    expect_s4_class(diff_results, "DFrame")
+    expect_true(all(c("pvalue", "padj", "lfc") %in% colnames(diff_results)))
+})
+
 test_that("paired_diff works with rownames", {
     diff_results <- suppressWarnings(
         paired_diff(
@@ -450,6 +468,22 @@ test_that("run_deseq returns correct values", {
     
     expect_true(all(!is.na(expression_results$gene)))
     expect_true(all(!is.na(expression_results$transcript)))
+})
+
+test_that("run_deseq executes Wald without a reduced model", {
+    wald_results <- run_deseq(
+        test_dds,
+        group_col = "group_nr",
+        baseline = "1",
+        case = "2",
+        test = "wald",
+        fit_type = "mean",
+        quiet = TRUE)
+
+    expect_s4_class(wald_results, "DFrame")
+    expect_named(wald_results, c(
+        "gene", "transcript", "lfc", "pvalue", "padj", "baseMean"))
+    expect_error(normalize_differential_test("score"), "LRT.*Wald")
 })
 
 test_that("run_deseq handles invalid arguments", {
